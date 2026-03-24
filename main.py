@@ -15,6 +15,7 @@ from crash_rebound_config import (
     ALERT_WINDOW_START,
     CHECK_INTERVAL_SECONDS,
     CRASH_WATCHLIST,
+    FORCE_TEST_MESSAGE,
 )
 from state_utils import load_state, save_state
 from telegram_utils import send_telegram_message
@@ -44,6 +45,29 @@ def main() -> None:
 
     if not token_bot or not chat_id:
         print("[BOOT] Mangler TOKEN_BOT eller CHAT_ID i miljøvariabler. Stopper.")
+        return
+
+    if FORCE_TEST_MESSAGE:
+        print("[TEST] FORCE_TEST_MESSAGE er aktiv")
+        state = load_state()
+        tz = pytz.timezone(ALERT_TIMEZONE)
+        today = datetime.now(tz).date().isoformat()
+        if state.get("test_message_sent_date") != today:
+            message_html = (
+                "🧪 <b>TEST – Crash Rebound Bot</b>\n\n"
+                "Boten er live i Railway og sender meldinger korrekt.\n\n"
+                "✅ Telegram-tilkobling virker  \n"
+                "✅ TOKEN_BOT virker  \n"
+                "✅ CHAT_ID virker  \n\n"
+                "Status:\n"
+                "Testmodus er aktiv."
+            )
+            send_telegram_message(token_bot=token_bot, chat_id=chat_id, message_html=message_html)
+            state["test_message_sent_date"] = today
+            save_state(state)
+            print("[TEST] Testmelding sendt")
+        else:
+            print("[TEST] Testmelding allerede sendt i dag")
         return
 
     print("[BOOT] Crash Rebound-bot starter.")
