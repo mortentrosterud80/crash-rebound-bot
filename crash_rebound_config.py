@@ -1,34 +1,48 @@
-"""Konfigurasjon for Crash Rebound-boten."""
+"""Konfigurasjon for ELO Crash Rebound-bot (v1)."""
 
 ALERT_TIMEZONE = "Europe/Oslo"
 ALERT_WINDOW_START = "09:00"
 ALERT_WINDOW_END = "16:30"
 CHECK_INTERVAL_SECONDS = 15 * 60
-FORCE_TEST_MESSAGE = True
 
-STATE_FILE_PATH = "data/crash_rebound_state.json"
+STATE_FILE_PATH = "data/crash_state.json"
 
-CRASH_WATCHLIST = {
+WATCHLIST = ["ELO.OL"]
+TICKER_META = {
     "ELO.OL": {
         "name": "Elopak",
         "emoji": "🧃",
-        "enabled": True,
-        "crash_drop_pct": -12.0,
-        "intraday_crash_pct": -10.0,
-        "volume_ratio_min": 1.8,
-        "rebound_confirm_pct": 3.0,
     }
 }
 
+PHASE_IDLE = "IDLE"
+PHASE_CRASH_ALERT = "CRASH_ALERT"
+PHASE_REBOUND_WATCH = "REBOUND_WATCH"
+PHASE_SETUP_ACTIVE = "SETUP_ACTIVE"
+PHASE_COOL_OFF = "COOL_OFF"
+
+PHASES = {
+    PHASE_IDLE,
+    PHASE_CRASH_ALERT,
+    PHASE_REBOUND_WATCH,
+    PHASE_SETUP_ACTIVE,
+    PHASE_COOL_OFF,
+}
+
+MIN_ALERT_COOLDOWN_MINUTES = 30
+MIN_SETUP_RR = 1.8
+
 DEFAULT_TICKER_STATE = {
-    "status": "IDLE",  # IDLE | WATCH
-    "crash_date": None,
-    "panic_low": None,
+    "phase": PHASE_IDLE,
+    "last_message_type": None,
+    "last_message_ts": None,
     "last_price": None,
     "last_day_change_pct": None,
-    "last_signal": None,
+    "panic_low": None,
+    "event_start_date": None,
+    "base_low": None,
+    "setup_sent": False,
+    "rebound_watch_started_at": None,
+    "last_alert_change_pct": None,
     "updated_at": None,
-    "crash_alert_sent_date": None,
-    "rebound_watch_sent_date": None,
-    "setup_sent_date": None,
 }
