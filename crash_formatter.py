@@ -25,6 +25,10 @@ def _header(emoji: str, title: str, now_oslo: datetime, day_label: str | None = 
     return f"{emoji} <b>{title}</b> — {ts}"
 
 
+def with_test_mode_banner(message_html: str) -> str:
+    return f"🧪 <b>TESTMODUS</b>\n{message_html}"
+
+
 def crash_alert_message(symbol: str, name: str, metrics: dict, now_oslo: datetime, trigger_lines: list[str]) -> str:
     trigger_text = "\n".join([f"• {line}" for line in trigger_lines])
     return (
@@ -88,7 +92,7 @@ def setup_active_message(symbol: str, name: str, metrics: dict, now_oslo: dateti
 
 def cool_off_message(symbol: str, name: str, metrics: dict, now_oslo: datetime, reason: str) -> str:
     return (
-        "🧪 <b>ELO Status</b>\n\n"
+        f"{_header('🧊', 'COOL OFF', now_oslo)}\n\n"
         f"🧃 <b>{symbol}</b> ({name})\n"
         f"💰 Kurs: <b>{fmt_nok(metrics.get('last_price'))} NOK</b>\n"
         f"📉 Endring: <b>{fmt_pct(metrics.get('day_change_pct'))}</b>\n\n"

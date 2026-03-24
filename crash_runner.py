@@ -17,7 +17,7 @@ from crash_rebound_config import (
     TICKER_META,
     WATCHLIST,
 )
-from state_utils import load_state, save_state
+from state_utils import get_ticker_state, load_state, save_state, update_ticker_state
 from telegram_utils import send_telegram_message
 
 
@@ -48,7 +48,11 @@ def main() -> None:
     print(f"[BOOT] Crashbot startet for: {', '.join(WATCHLIST)}")
 
     while True:
-        within_window = is_market_hours()
+        force_test_mode = os.getenv("CRASHBOT_FORCE_TEST", "false").strip().lower() == "true"
+        test_phase = os.getenv("CRASHBOT_TEST_PHASE", "CRASH_ALERT").strip().upper()
+        test_send_once = os.getenv("CRASHBOT_TEST_SEND_ONCE", "true").strip().lower() == "true"
+
+        within_window = True if force_test_mode else is_market_hours()
         state = load_state()
 
         for symbol in WATCHLIST:
@@ -63,8 +67,19 @@ def main() -> None:
                 state=state,
                 can_send_alerts=within_window,
                 send_message=_sender,
+                force_test_mode=force_test_mode,
+                test_phase=test_phase,
+                test_send_once=test_send_once,
             )
 
+            if not force_test_mode:
+                ticker_state = get_ticker_state(state, symbol)
+                if ticker_state.get("last_test_phase_sent") is not None:
+                    state = update_ticker_state(state, symbol, {"last_test_phase_sent": None})
+
         save_state(state)
-        print(f"[LOOP] Syklus ferdig. market_hours={within_window}. Sover {CHECK_INTERVAL_SECONDS}s")
+        print(
+            f"[LOOP] Syklus ferdig. market_hours={within_window} force_test={force_test_mode} "
+            f"test_phase={test_phase} send_once={test_send_once}. Sover {CHECK_INTERVAL_SECONDS}s"
+        )
         time.sleep(CHECK_INTERVAL_SECONDS)
