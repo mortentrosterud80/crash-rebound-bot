@@ -4,6 +4,7 @@ ALERT_TIMEZONE = "Europe/Oslo"
 ALERT_WINDOW_START = "09:00"
 ALERT_WINDOW_END = "16:30"
 CHECK_INTERVAL_SECONDS = 15 * 60
+FORCE_TEST_MESSAGE = False
 
 STATE_FILE_PATH = "data/crash_rebound_state.json"
 
