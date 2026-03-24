@@ -44,5 +44,6 @@ DEFAULT_TICKER_STATE = {
     "setup_sent": False,
     "rebound_watch_started_at": None,
     "last_alert_change_pct": None,
+    "last_test_phase_sent": None,
     "updated_at": None,
 }

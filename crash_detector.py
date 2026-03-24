@@ -14,6 +14,7 @@ from crash_formatter import (
     crash_alert_message,
     rebound_watch_message,
     setup_active_message,
+    with_test_mode_banner,
 )
 from crash_rebound_config import (
     ALERT_TIMEZONE,
@@ -30,6 +31,48 @@ from state_utils import get_ticker_state, update_ticker_state
 
 def now_oslo() -> datetime:
     return datetime.now(pytz.timezone(ALERT_TIMEZONE))
+
+
+def _build_test_metrics(phase: str) -> dict[str, Any]:
+    datasets: dict[str, dict[str, Any]] = {
+        PHASE_CRASH_ALERT: {
+            "last_price": 38.10,
+            "day_change_pct": -19.8,
+            "pct_5d": -21.4,
+            "volume_ratio": 2.6,
+            "day_low": 37.40,
+            "day_high": 41.20,
+            "previous_close": 47.51,
+        },
+        PHASE_REBOUND_WATCH: {
+            "last_price": 37.80,
+            "day_change_pct": -1.2,
+            "pct_5d": -20.5,
+            "volume_ratio": 1.1,
+            "day_low": 37.30,
+            "day_high": 38.40,
+            "previous_close": 38.26,
+        },
+        PHASE_SETUP_ACTIVE: {
+            "last_price": 39.40,
+            "day_change_pct": 4.1,
+            "pct_5d": -14.0,
+            "volume_ratio": 1.8,
+            "day_low": 39.10,
+            "day_high": 40.00,
+            "previous_close": 37.85,
+        },
+        PHASE_COOL_OFF: {
+            "last_price": 40.10,
+            "day_change_pct": 0.4,
+            "pct_5d": -8.0,
+            "volume_ratio": 0.9,
+            "day_low": 39.70,
+            "day_high": 40.30,
+            "previous_close": 39.94,
+        },
+    }
+    return datasets.get(phase, datasets[PHASE_CRASH_ALERT]).copy()
 
 
 def _calc_rsi14(close: pd.Series) -> float | None:
@@ -261,7 +304,60 @@ def _event_day_number(event_start_date: str | None) -> int:
         return 1
 
 
-def evaluate_ticker(symbol: str, meta: dict, state: dict, can_send_alerts: bool, send_message) -> dict:
+def evaluate_ticker(
+    symbol: str,
+    meta: dict,
+    state: dict,
+    can_send_alerts: bool,
+    send_message,
+    force_test_mode: bool = False,
+    test_phase: str | None = None,
+    test_send_once: bool = True,
+) -> dict:
+    if force_test_mode:
+        phase = test_phase if test_phase in {PHASE_CRASH_ALERT, PHASE_REBOUND_WATCH, PHASE_SETUP_ACTIVE, PHASE_COOL_OFF} else PHASE_CRASH_ALERT
+        ticker_state = get_ticker_state(state, symbol)
+        if test_send_once and ticker_state.get("last_test_phase_sent") == phase:
+            return state
+
+        metrics = _build_test_metrics(phase)
+        alert_now = now_oslo()
+        if phase == PHASE_CRASH_ALERT:
+            trigger_lines = ["Kraftig nyhetsdrevet reaksjon mistenkes"]
+            message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines)
+        elif phase == PHASE_REBOUND_WATCH:
+            observations = ["Selgerpress avtar", "Holder over intradag low fra i går", "Volum normaliseres"]
+            message_html = rebound_watch_message(symbol, meta["name"], metrics, alert_now, 2, observations)
+        elif phase == PHASE_SETUP_ACTIVE:
+            setup = {
+                "entry_low": 39.20,
+                "entry_high": 39.80,
+                "stop": 36.90,
+                "target_1": 42.00,
+                "target_2": 44.00,
+                "rr_to_t1": 2.0,
+            }
+            triggers = ["Første sterke grønne dag", "Higher low etablert", "Volum støtter oppgang"]
+            message_html = setup_active_message(symbol, meta["name"], metrics, alert_now, 3, setup, triggers)
+        else:
+            reason = "Testfase for COOL OFF."
+            message_html = cool_off_message(symbol, meta["name"], metrics, alert_now, reason)
+
+        if send_message(with_test_mode_banner(message_html)):
+            state = update_ticker_state(
+                state,
+                symbol,
+                {
+                    "phase": phase,
+                    "last_message_type": phase,
+                    "last_message_ts": datetime.now(pytz.utc).isoformat(),
+                    "last_test_phase_sent": phase,
+                    "last_price": round(metrics["last_price"], 4),
+                    "last_day_change_pct": round(metrics["day_change_pct"], 4),
+                },
+            )
+        return state
+
     metrics = fetch_market_data(symbol)
     if not metrics:
         return state
