@@ -54,6 +54,7 @@ def main() -> None:
 
     while True:
         force_test_mode = os.getenv("CRASHBOT_FORCE_TEST", "false").strip().lower() == "true"
+        ignore_market_hours = os.getenv("CRASHBOT_IGNORE_MARKET_HOURS", "false").strip().lower() == "true"
         raw_test_phase = os.getenv("CRASHBOT_TEST_PHASE", "CRASH_ALERT").strip().upper()
         test_phase = raw_test_phase
         if test_phase not in valid_test_phases:
@@ -61,18 +62,21 @@ def main() -> None:
             test_phase = PHASE_CRASH_ALERT
         test_send_once = os.getenv("CRASHBOT_TEST_SEND_ONCE", "true").strip().lower() == "true"
 
-        within_window = True if force_test_mode else is_market_hours()
+        within_window = True if force_test_mode or ignore_market_hours else is_market_hours()
         print("[BOOT] Testvariabler:")
         print(f"        CRASHBOT_FORCE_TEST={'true' if force_test_mode else 'false'}")
+        print(f"        CRASHBOT_IGNORE_MARKET_HOURS={'true' if ignore_market_hours else 'false'}")
         print(f"        CRASHBOT_TEST_PHASE={test_phase}")
         print(f"        CRASHBOT_TEST_SEND_ONCE={'true' if test_send_once else 'false'}")
         print(
-            f"[DEBUG] force_test={force_test_mode} test_phase={test_phase} "
+            f"[DEBUG] force_test={force_test_mode} ignore_market_hours={ignore_market_hours} test_phase={test_phase} "
             f"send_once={test_send_once} market_hours={within_window}"
         )
         if force_test_mode:
             print(f"[TEST] Testmodus aktivert. Bypasser market hours og bruker testfase: {test_phase}")
             print("[TEST] Market hours bypass aktiv.")
+        elif ignore_market_hours:
+            print("[TEST] CRASHBOT_IGNORE_MARKET_HOURS=true. Bypasser market hours, men kjører normal logikk.")
         else:
             print("[DEBUG] Testmodus er IKKE aktiv. Kjører normal market-hours logikk.")
         state = load_state()
