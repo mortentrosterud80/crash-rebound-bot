@@ -29,8 +29,19 @@ def with_test_mode_banner(message_html: str) -> str:
     return f"🧪 <b>TESTMODUS</b>\n{message_html}"
 
 
-def crash_alert_message(symbol: str, name: str, metrics: dict, now_oslo: datetime, trigger_lines: list[str]) -> str:
+def crash_alert_message(
+    symbol: str,
+    name: str,
+    metrics: dict,
+    now_oslo: datetime,
+    trigger_lines: list[str],
+    sentiment_commentary: str | None = None,
+) -> str:
     trigger_text = "\n".join([f"• {line}" for line in trigger_lines])
+    sentiment_block = ""
+    if sentiment_commentary:
+        sentiment_block = f"\n📰 <b>Stemning nå:</b>\n{sentiment_commentary}\n"
+
     return (
         f"{_header('⚠️', 'CRASH ALERT', now_oslo)}\n\n"
         f"🧃 <b>{symbol}</b> ({name})\n"
@@ -38,7 +49,8 @@ def crash_alert_message(symbol: str, name: str, metrics: dict, now_oslo: datetim
         f"📉 Endring: <b>{fmt_pct(metrics.get('day_change_pct'))}</b> (vs forrige close)\n"
         f"📊 Volum: <b>{metrics.get('volume_ratio', 0.0):.1f}x</b> normal\n\n"
         "Mulig driver:\n"
-        f"{trigger_text}\n\n"
+        f"{trigger_text}\n"
+        f"{sentiment_block}\n"
         "<b>🧠 AI-vurdering:</b>\n"
         "Dette ligner et event-crash med panikkpreg. Ikke kjøp for tidlig.\n\n"
         "<b>Handling nå:</b>\n"
@@ -48,15 +60,28 @@ def crash_alert_message(symbol: str, name: str, metrics: dict, now_oslo: datetim
     )
 
 
-def rebound_watch_message(symbol: str, name: str, metrics: dict, now_oslo: datetime, day_number: int, observations: list[str]) -> str:
+def rebound_watch_message(
+    symbol: str,
+    name: str,
+    metrics: dict,
+    now_oslo: datetime,
+    day_number: int,
+    observations: list[str],
+    sentiment_commentary: str | None = None,
+) -> str:
     obs = "\n".join([f"• {line}" for line in observations])
+    sentiment_block = ""
+    if sentiment_commentary:
+        sentiment_block = f"\n📰 <b>Stemning nå:</b>\n{sentiment_commentary}\n"
+
     return (
         f"{_header('👀', 'REBOUND WATCH', now_oslo, f'Dag {day_number}') }\n\n"
         f"🧃 <b>{symbol}</b> ({name})\n"
         f"💰 Kurs: <b>{fmt_nok(metrics.get('last_price'))} NOK</b>\n"
         f"📉 Endring: <b>{fmt_pct(metrics.get('day_change_pct'))}</b> i dag\n\n"
         "Observasjoner:\n"
-        f"{obs}\n\n"
+        f"{obs}\n"
+        f"{sentiment_block}\n"
         "<b>AI-signal:</b>\n"
         "Markedet kan være i ferd med å absorbere sjokket.\n"
         "→ Potensiell base-formasjon starter\n\n"
@@ -87,6 +112,26 @@ def setup_active_message(symbol: str, name: str, metrics: dict, now_oslo: dateti
         "• Høy volatilitet forventes\n\n"
         "🧠 <b>AI-kommentar</b>\n"
         "Dette er en kortsiktig rebound-trade, ikke en langsiktig investering."
+    )
+
+
+def follow_up_message(symbol: str, name: str, metrics: dict, now_oslo: datetime, day_number: int, status_label: str, sentiment_commentary: str) -> str:
+    slot = now_oslo.strftime("%H:%M")
+    return (
+        f"📍 <b>{symbol} OPPFØLGING — Dag {day_number} ({slot})</b>\n\n"
+        f"🧃 <b>{symbol}</b> ({name})\n"
+        f"💰 Kurs: <b>{fmt_nok(metrics.get('last_price'))} NOK</b>\n"
+        f"📈 Fra open: <b>{fmt_pct(metrics.get('from_open_pct'))}</b>\n"
+        f"📊 Volum: <b>{metrics.get('volume_ratio', 0.0):.1f}x</b> normal\n"
+        f"🩸 Panikkbunn: <b>{fmt_nok(metrics.get('panic_low'))} NOK</b>\n\n"
+        "📰 <b>Stemning nå:</b>\n"
+        f"{sentiment_commentary}\n\n"
+        "📍 <b>Status nå:</b>\n"
+        f"{status_label}\n\n"
+        "🎯 <b>Hva ser vi etter:</b>\n"
+        "• Holder over panikkbunn\n"
+        "• Bedre volum og grønn styrke\n"
+        "• Ingen nye negative signaler"
     )
 
 

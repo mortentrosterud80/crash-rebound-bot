@@ -12,6 +12,7 @@ import yfinance as yf
 from crash_formatter import (
     cool_off_message,
     crash_alert_message,
+    follow_up_message,
     rebound_watch_message,
     setup_active_message,
     with_test_mode_banner,
@@ -26,7 +27,15 @@ from crash_rebound_config import (
     PHASE_REBOUND_WATCH,
     PHASE_SETUP_ACTIVE,
 )
+from news_utils import get_sentiment_snapshot
 from state_utils import get_ticker_state, update_ticker_state
+
+FOLLOW_UP_SLOTS = {
+    "09:00": "last_sent_0900",
+    "11:00": "last_sent_1100",
+    "13:00": "last_sent_1300",
+    "15:00": "last_sent_1500",
+}
 
 
 def now_oslo() -> datetime:
@@ -111,6 +120,7 @@ def fetch_market_data(symbol: str) -> dict[str, Any] | None:
         day_high = float(daily.iloc[-1]["High"])
         day_low = float(daily.iloc[-1]["Low"])
         day_volume = float(daily.iloc[-1]["Volume"])
+        day_open = float(daily.iloc[-1]["Open"])
 
         if not intraday.empty:
             idx = intraday.index
@@ -123,9 +133,11 @@ def fetch_market_data(symbol: str) -> dict[str, Any] | None:
                 day_high = float(today_data["High"].max())
                 day_low = float(today_data["Low"].min())
                 day_volume = float(today_data["Volume"].sum())
+                day_open = float(today_data.iloc[0]["Open"])
 
         previous_close = float(daily.iloc[-2]["Close"])
         day_change_pct = ((last_price / previous_close) - 1) * 100 if previous_close else 0.0
+        from_open_pct = ((last_price / day_open) - 1) * 100 if day_open else 0.0
 
         close_series = daily["Close"].copy()
         close_series.iloc[-1] = last_price
@@ -143,6 +155,7 @@ def fetch_market_data(symbol: str) -> dict[str, Any] | None:
             "last_price": last_price,
             "previous_close": previous_close,
             "day_change_pct": day_change_pct,
+            "from_open_pct": from_open_pct,
             "pct_3d": pct_3d,
             "pct_5d": pct_5d,
             "day_volume": day_volume,
@@ -150,6 +163,7 @@ def fetch_market_data(symbol: str) -> dict[str, Any] | None:
             "volume_ratio": volume_ratio,
             "day_low": day_low,
             "day_high": day_high,
+            "day_open": day_open,
             "rsi14": rsi14,
             "atr14": atr14,
         }
@@ -296,12 +310,75 @@ def _cool_off_reason(metrics: dict, ticker_state: dict) -> str | None:
 
 def _event_day_number(event_start_date: str | None) -> int:
     if not event_start_date:
-        return 1
+        return 0
     try:
         start = datetime.fromisoformat(event_start_date).date()
-        return max(1, (now_oslo().date() - start).days + 1)
+        return max(0, (now_oslo().date() - start).days)
     except Exception:
-        return 1
+        return 0
+
+
+def _status_label(metrics: dict, ticker_state: dict, sentiment_bucket: str) -> str:
+    panic_low = ticker_state.get("panic_low")
+    if panic_low and metrics.get("last_price", 0.0) < panic_low:
+        return "🔴 Svekkes igjen"
+
+    if metrics.get("from_open_pct", 0.0) >= 1.2 and metrics.get("volume_ratio", 0.0) >= 1.0 and sentiment_bucket in {"Bedrende", "Positivt"}:
+        return "🟢 Bedrer seg"
+
+    if sentiment_bucket in {"Negativt", "Svakt negativt"} and metrics.get("from_open_pct", 0.0) < 0:
+        return "🔴 Svekkes igjen"
+
+    return "🟡 Stabiliserer seg"
+
+
+def _follow_up_slot(now: datetime) -> tuple[str, str] | None:
+    hhmm = now.strftime("%H:%M")
+    if hhmm in FOLLOW_UP_SLOTS:
+        return hhmm, FOLLOW_UP_SLOTS[hhmm]
+    return None
+
+
+def _send_follow_up_if_due(symbol: str, meta: dict, ticker_state: dict, metrics: dict, can_send_alerts: bool, send_message, sentiment) -> dict[str, Any] | None:
+    if not can_send_alerts or not ticker_state.get("active_followup"):
+        return None
+
+    day_number = _event_day_number(ticker_state.get("followup_start_date"))
+    if day_number > 3:
+        return {"active_followup": False, "followup_day_number": day_number}
+
+    slot_info = _follow_up_slot(now_oslo())
+    if not slot_info:
+        return {"followup_day_number": day_number}
+
+    _, state_key = slot_info
+    today = now_oslo().date().isoformat()
+    if ticker_state.get(state_key) == today:
+        return {"followup_day_number": day_number}
+
+    status_label = _status_label(metrics, ticker_state, sentiment.sentiment)
+    followup_metrics = {**metrics, "panic_low": ticker_state.get("panic_low")}
+    message_html = follow_up_message(
+        symbol=symbol,
+        name=meta["name"],
+        metrics=followup_metrics,
+        now_oslo=now_oslo(),
+        day_number=day_number,
+        status_label=status_label,
+        sentiment_commentary=sentiment.commentary,
+    )
+
+    if send_message(message_html):
+        return {
+            state_key: today,
+            "followup_day_number": day_number,
+            "last_message_type": "FOLLOW_UP",
+            "last_message_ts": datetime.now(pytz.utc).isoformat(),
+            "last_sentiment": sentiment.sentiment,
+            "last_news_cause": sentiment.cause,
+        }
+
+    return {"followup_day_number": day_number}
 
 
 def evaluate_ticker(
@@ -329,7 +406,7 @@ def evaluate_ticker(
             message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines)
         elif phase == PHASE_REBOUND_WATCH:
             observations = ["Selgerpress avtar", "Holder over intradag low fra i går", "Volum normaliseres"]
-            message_html = rebound_watch_message(symbol, meta["name"], metrics, alert_now, 2, observations)
+            message_html = rebound_watch_message(symbol, meta["name"], metrics, alert_now, 1, observations)
         elif phase == PHASE_SETUP_ACTIVE:
             setup = {
                 "entry_low": 39.20,
@@ -340,7 +417,7 @@ def evaluate_ticker(
                 "rr_to_t1": 2.0,
             }
             triggers = ["Første sterke grønne dag", "Higher low etablert", "Volum støtter oppgang"]
-            message_html = setup_active_message(symbol, meta["name"], metrics, alert_now, 3, setup, triggers)
+            message_html = setup_active_message(symbol, meta["name"], metrics, alert_now, 1, setup, triggers)
         else:
             reason = "Testfase for COOL OFF."
             message_html = cool_off_message(symbol, meta["name"], metrics, alert_now, reason)
@@ -373,6 +450,7 @@ def evaluate_ticker(
     current_phase = ticker_state.get("phase", PHASE_IDLE)
     alert_now = now_oslo()
     today = alert_now.date().isoformat()
+    sentiment = get_sentiment_snapshot(symbol)
 
     state = update_ticker_state(
         state,
@@ -381,6 +459,8 @@ def evaluate_ticker(
             "last_price": round(metrics["last_price"], 4),
             "last_day_change_pct": round(metrics["day_change_pct"], 4),
             "base_low": round(min(metrics["day_low"], ticker_state.get("base_low") or metrics["day_low"]), 4),
+            "last_sentiment": sentiment.sentiment,
+            "last_news_cause": sentiment.cause,
         },
     )
     ticker_state = get_ticker_state(state, symbol)
@@ -397,15 +477,23 @@ def evaluate_ticker(
     if crash_hit and current_phase in {PHASE_IDLE, PHASE_COOL_OFF}:
         next_phase = PHASE_CRASH_ALERT
         message_type = PHASE_CRASH_ALERT
-        message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines)
+        message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines, sentiment.commentary)
         state = update_ticker_state(
             state,
             symbol,
             {
                 "panic_low": round(metrics["day_low"], 4),
+                "panic_high": round(metrics["day_high"], 4),
                 "event_start_date": today,
+                "followup_start_date": today,
+                "followup_day_number": 0,
+                "active_followup": True,
                 "setup_sent": False,
                 "last_alert_change_pct": round(metrics["day_change_pct"], 4),
+                "last_sent_0900": None,
+                "last_sent_1100": None,
+                "last_sent_1300": None,
+                "last_sent_1500": None,
             },
         )
 
@@ -413,7 +501,7 @@ def evaluate_ticker(
         next_phase = PHASE_REBOUND_WATCH
         message_type = PHASE_REBOUND_WATCH
         day_number = _event_day_number(ticker_state.get("event_start_date"))
-        message_html = rebound_watch_message(symbol, meta["name"], metrics, alert_now, day_number, observations)
+        message_html = rebound_watch_message(symbol, meta["name"], metrics, alert_now, day_number, observations, sentiment.commentary)
 
     elif current_phase == PHASE_REBOUND_WATCH and setup_ready and setup and not ticker_state.get("setup_sent"):
         next_phase = PHASE_SETUP_ACTIVE
@@ -425,12 +513,13 @@ def evaluate_ticker(
         next_phase = PHASE_COOL_OFF
         message_type = PHASE_COOL_OFF
         message_html = cool_off_message(symbol, meta["name"], metrics, alert_now, cool_reason)
+        state = update_ticker_state(state, symbol, {"active_followup": False})
 
     elif current_phase == PHASE_CRASH_ALERT and crash_hit:
         last_alert_change = ticker_state.get("last_alert_change_pct")
         if last_alert_change is not None and metrics["day_change_pct"] <= float(last_alert_change) - 3.0:
             message_type = PHASE_CRASH_ALERT
-            message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines)
+            message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines, sentiment.commentary)
             state = update_ticker_state(state, symbol, {"last_alert_change_pct": round(metrics["day_change_pct"], 4)})
 
     if message_type and message_html and can_send_alerts:
@@ -450,5 +539,10 @@ def evaluate_ticker(
                 if message_type == PHASE_SETUP_ACTIVE:
                     updates["setup_sent"] = True
                 state = update_ticker_state(state, symbol, updates)
+
+    ticker_state = get_ticker_state(state, symbol)
+    followup_updates = _send_follow_up_if_due(symbol, meta, ticker_state, metrics, can_send_alerts, send_message, sentiment)
+    if followup_updates:
+        state = update_ticker_state(state, symbol, followup_updates)
 
     return state
