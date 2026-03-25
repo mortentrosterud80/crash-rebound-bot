@@ -14,6 +14,10 @@ from crash_rebound_config import (
     ALERT_WINDOW_END,
     ALERT_WINDOW_START,
     CHECK_INTERVAL_SECONDS,
+    PHASE_COOL_OFF,
+    PHASE_CRASH_ALERT,
+    PHASE_REBOUND_WATCH,
+    PHASE_SETUP_ACTIVE,
     TICKER_META,
     WATCHLIST,
 )
@@ -46,13 +50,31 @@ def main() -> None:
         return
 
     print(f"[BOOT] Crashbot startet for: {', '.join(WATCHLIST)}")
+    valid_test_phases = {PHASE_CRASH_ALERT, PHASE_REBOUND_WATCH, PHASE_SETUP_ACTIVE, PHASE_COOL_OFF}
 
     while True:
         force_test_mode = os.getenv("CRASHBOT_FORCE_TEST", "false").strip().lower() == "true"
-        test_phase = os.getenv("CRASHBOT_TEST_PHASE", "CRASH_ALERT").strip().upper()
+        raw_test_phase = os.getenv("CRASHBOT_TEST_PHASE", "CRASH_ALERT").strip().upper()
+        test_phase = raw_test_phase
+        if test_phase not in valid_test_phases:
+            print(f"[WARN] Ugyldig CRASHBOT_TEST_PHASE='{raw_test_phase}'. Faller tilbake til CRASH_ALERT.")
+            test_phase = PHASE_CRASH_ALERT
         test_send_once = os.getenv("CRASHBOT_TEST_SEND_ONCE", "true").strip().lower() == "true"
 
         within_window = True if force_test_mode else is_market_hours()
+        print("[BOOT] Testvariabler:")
+        print(f"        CRASHBOT_FORCE_TEST={'true' if force_test_mode else 'false'}")
+        print(f"        CRASHBOT_TEST_PHASE={test_phase}")
+        print(f"        CRASHBOT_TEST_SEND_ONCE={'true' if test_send_once else 'false'}")
+        print(
+            f"[DEBUG] force_test={force_test_mode} test_phase={test_phase} "
+            f"send_once={test_send_once} market_hours={within_window}"
+        )
+        if force_test_mode:
+            print(f"[TEST] Testmodus aktivert. Bypasser market hours og bruker testfase: {test_phase}")
+            print("[TEST] Market hours bypass aktiv.")
+        else:
+            print("[DEBUG] Testmodus er IKKE aktiv. Kjører normal market-hours logikk.")
         state = load_state()
 
         for symbol in WATCHLIST:
@@ -75,7 +97,15 @@ def main() -> None:
             if not force_test_mode:
                 ticker_state = get_ticker_state(state, symbol)
                 if ticker_state.get("last_test_phase_sent") is not None:
-                    state = update_ticker_state(state, symbol, {"last_test_phase_sent": None})
+                    print(f"[DEBUG] Testmodus avslått. Nullstiller last_test_phase_sent for {symbol}.")
+                    state = update_ticker_state(
+                        state,
+                        symbol,
+                        {
+                            "last_test_phase_sent": None,
+                            "last_test_sent_at": None,
+                        },
+                    )
 
         save_state(state)
         print(

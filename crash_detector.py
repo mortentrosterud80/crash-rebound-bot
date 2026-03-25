@@ -318,10 +318,12 @@ def evaluate_ticker(
         phase = test_phase if test_phase in {PHASE_CRASH_ALERT, PHASE_REBOUND_WATCH, PHASE_SETUP_ACTIVE, PHASE_COOL_OFF} else PHASE_CRASH_ALERT
         ticker_state = get_ticker_state(state, symbol)
         if test_send_once and ticker_state.get("last_test_phase_sent") == phase:
+            print(f"[TEST] Hopper over testmelding fordi fase {phase} allerede er sendt og send_once=True")
             return state
 
         metrics = _build_test_metrics(phase)
         alert_now = now_oslo()
+        print(f"[TEST] Bruker testdata for {symbol} i fase {phase}")
         if phase == PHASE_CRASH_ALERT:
             trigger_lines = ["Kraftig nyhetsdrevet reaksjon mistenkes"]
             message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines)
@@ -343,7 +345,9 @@ def evaluate_ticker(
             reason = "Testfase for COOL OFF."
             message_html = cool_off_message(symbol, meta["name"], metrics, alert_now, reason)
 
-        if send_message(with_test_mode_banner(message_html)):
+        print(f"[TEST] Sender Telegram testmelding for fase {phase}")
+        sent_ok = send_message(with_test_mode_banner(message_html))
+        if sent_ok:
             state = update_ticker_state(
                 state,
                 symbol,
@@ -352,10 +356,13 @@ def evaluate_ticker(
                     "last_message_type": phase,
                     "last_message_ts": datetime.now(pytz.utc).isoformat(),
                     "last_test_phase_sent": phase,
+                    "last_test_sent_at": datetime.now(pytz.utc).isoformat(),
                     "last_price": round(metrics["last_price"], 4),
                     "last_day_change_pct": round(metrics["day_change_pct"], 4),
                 },
             )
+        else:
+            print(f"[ERROR] Telegram testmelding feilet for fase {phase}")
         return state
 
     metrics = fetch_market_data(symbol)
