@@ -108,6 +108,47 @@ def _setup_ready(meta: dict, m: dict, ticker_state: dict) -> bool:
     return green_day and above_panic_with_margin
 
 
+def _calc_rebound_score(metrics: dict, ticker_state: dict) -> int:
+    """Enkel defensiv rebound-score (0-10) for WATCH-meldingen."""
+    score = 0
+    panic_low = ticker_state.get("panic_low")
+    panic_high = ticker_state.get("panic_high")
+
+    if panic_low and panic_low > 0 and metrics.get("last_price", 0.0) >= panic_low:
+        score += 2
+
+    if metrics.get("day_change_pct", 0.0) > 0:
+        score += 2
+
+    if metrics.get("volume_ratio", 0.0) >= 1.2:
+        score += 2
+
+    if metrics.get("intraday_drop_pct", 0.0) > -4.0:
+        score += 2
+
+    if panic_high and panic_high > panic_low:
+        reclaim_ratio = (metrics.get("last_price", 0.0) - panic_low) / (panic_high - panic_low)
+        if reclaim_ratio >= 0.35:
+            score += 2
+
+    return max(0, min(10, score))
+
+
+def _calc_risk_label(metrics: dict, ticker_state: dict) -> str:
+    """Konservativ risikotagging for rebound-case."""
+    panic_low = ticker_state.get("panic_low")
+    panic_high = ticker_state.get("panic_high")
+    if not panic_low or not panic_high or panic_high <= panic_low:
+        return "Høy"
+
+    reclaim_ratio = (metrics.get("last_price", 0.0) - panic_low) / (panic_high - panic_low)
+    if reclaim_ratio >= 0.85 and metrics.get("day_change_pct", 0.0) >= 5.0 and metrics.get("volume_ratio", 0.0) >= 2.0:
+        return "Lav"
+    if reclaim_ratio >= 0.7 and metrics.get("day_change_pct", 0.0) >= 3.0 and metrics.get("volume_ratio", 0.0) >= 1.5:
+        return "Middels"
+    return "Høy"
+
+
 def build_trade_plan(last_price: float, panic_low: float) -> Dict[str, float]:
     entry = last_price
     stop = min(last_price * 0.96, panic_low * 0.995)
@@ -151,6 +192,7 @@ def evaluate_ticker(
             "status": "WATCH",
             "crash_date": today,
             "panic_low": round(metrics["day_low"], 4),
+            "panic_high": round(metrics["day_high"], 4),
             "last_signal": "CRASH_ALERT",
         }
 
@@ -165,7 +207,14 @@ def evaluate_ticker(
         ticker_state = get_ticker_state(state, symbol)
 
     if ticker_state.get("status") == "WATCH":
-        watch_metrics = {**metrics, "panic_low": ticker_state.get("panic_low")}
+        watch_metrics = {
+            **metrics,
+            "panic_low": ticker_state.get("panic_low"),
+            "panic_high": ticker_state.get("panic_high"),
+            "rebound_score": _calc_rebound_score(metrics, ticker_state),
+            "risk_label": _calc_risk_label(metrics, ticker_state),
+            "invalidation_level": ticker_state.get("panic_low"),
+        }
 
         if _rebound_watch_ready(metrics, ticker_state):
             should_send_watch = can_send_alerts and ticker_state.get("rebound_watch_sent_date") != today
