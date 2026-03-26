@@ -42,12 +42,38 @@ def is_market_hours() -> bool:
     return (start_h * 60 + start_m) <= now_minutes <= (end_h * 60 + end_m)
 
 
+def send_startup_test_message(token_bot: str, chat_id: str) -> bool:
+    """Send en midlertidig testmelding ved oppstart."""
+    message_html = (
+        "📍 <b>TEST — OPPFØLGING (11:00)</b>\n\n"
+        "🧃 <b>ELO.OL</b> (Elopak)\n"
+        "💰 Kurs: <b>37,80 NOK</b>\n"
+        "📈 Fra open: <b>+1,2 %</b>\n"
+        "📊 Volum: <b>1.4x</b> normal\n"
+        "🩸 Panikkbunn: <b>36,00 NOK</b>\n\n"
+        "📰 <b>Stemning nå:</b>\n"
+        "Fortsatt forsiktig, men mindre panikk enn i går.\n\n"
+        "📍 <b>Status nå:</b>\n"
+        "🟡 Stabiliserer seg\n\n"
+        "🎯 <b>Hva ser vi etter:</b>\n"
+        "• Holder over panikkbunn\n"
+        "• Bedre volum og grønn styrke\n"
+        "• Ingen nye negative signaler"
+    )
+    return send_telegram_message(token_bot=token_bot, chat_id=chat_id, message_html=message_html)
+
+
 def main() -> None:
     token_bot = os.getenv("TOKEN_BOT")
     chat_id = os.getenv("CHAT_ID")
     if not token_bot or not chat_id:
         print("[BOOT] Mangler TOKEN_BOT eller CHAT_ID i miljøvariabler.")
         return
+
+    send_startup_test = os.getenv("CRASHBOT_SEND_TEST_MESSAGE", "false").strip().lower() == "true"
+    if send_startup_test:
+        print("[TEST] Sender testmelding til Telegram")
+        send_startup_test_message(token_bot=token_bot, chat_id=chat_id)
 
     print(f"[BOOT] Crashbot startet for: {', '.join(WATCHLIST)}")
     valid_test_phases = {PHASE_CRASH_ALERT, PHASE_REBOUND_WATCH, PHASE_SETUP_ACTIVE, PHASE_COOL_OFF}
