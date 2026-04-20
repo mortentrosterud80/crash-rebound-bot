@@ -22,7 +22,7 @@ from crash_rebound_config import (
     WATCHLIST,
 )
 from state_utils import get_ticker_state, load_state, save_state, update_ticker_state
-from telegram_utils import send_telegram_message
+from telegram_utils import send_telegram_message, send_telegram_message_detailed
 
 
 def _parse_hhmm(value: str) -> tuple[int, int]:
@@ -60,13 +60,18 @@ def send_startup_test_message(token_bot: str, chat_id: str) -> bool:
         "🧪 <b>Crashbot startup-test</b>\n\n"
         "Boten er oppe og forsøker Telegram-send."
     )
-    print("[TEST] Startup-test forsøkes: sender enkel Telegram testmelding.")
-    return send_telegram_message(
+    print("[TEST] Startup-test: sender enkel Telegram testmelding (STARTUP_TEST).")
+    result = send_telegram_message_detailed(
         token_bot=token_bot,
         chat_id=chat_id,
         message_html=message_html,
         message_type="STARTUP_TEST",
     )
+    print(
+        f"[TEST] Startup-test respons: success={result.success} status={result.status_code} "
+        f"body={result.response_snippet or '<empty>'} error={result.error or '<none>'}"
+    )
+    return result.success
 
 
 def main() -> None:
@@ -100,6 +105,7 @@ def main() -> None:
         if test_send_once and startup_test_sent:
             print("[TEST] Hopper over startup-test fordi CRASHBOT_TEST_SEND_ONCE=true og test allerede sendt.")
         else:
+            print("[TEST] CRASHBOT_FORCE_TEST=true -> forsøker startup-testmelding.")
             sent = send_startup_test_message(token_bot=token_bot, chat_id=chat_id)
             startup_test_sent = sent or test_send_once
             if sent:

@@ -61,6 +61,16 @@ def get_ticker_state(state: Dict[str, Dict[str, Any]], ticker: str) -> Dict[str,
     return merged
 
 
+def log_state_blocked_send(ticker: str, reason: str, ticker_state: Dict[str, Any]) -> None:
+    """Logg tydelig når state/cooldown blokkerer ny sending."""
+    print(
+        f"[STATE] Blokkert sending for {ticker}: {reason} | "
+        f"phase={ticker_state.get('phase')} "
+        f"last_message_type={ticker_state.get('last_message_type')} "
+        f"last_message_ts={ticker_state.get('last_message_ts')}"
+    )
+
+
 def update_ticker_state(state: Dict[str, Dict[str, Any]], ticker: str, updates: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Oppdater ticker-state i minnet og returner state."""
     ticker_state = get_ticker_state(state, ticker)

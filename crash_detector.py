@@ -28,7 +28,7 @@ from crash_rebound_config import (
     PHASE_SETUP_ACTIVE,
 )
 from news_utils import get_sentiment_snapshot
-from state_utils import get_ticker_state, update_ticker_state
+from state_utils import get_ticker_state, log_state_blocked_send, update_ticker_state
 
 FOLLOW_UP_SLOTS = {
     "09:00": "last_sent_0900",
@@ -461,7 +461,7 @@ def evaluate_ticker(
     print(f"[FLOW] {symbol}: kjører normal signalflyt.")
     metrics = fetch_market_data(symbol)
     if not metrics:
-        print(f"[FLOW] Manglende data for {symbol}, ingen signalvurdering denne runden.")
+        print(f"[FLOW] Manglende data for {symbol}, ingen signalvurdering eller melding denne runden.")
         return state
 
     ticker_state = get_ticker_state(state, symbol)
@@ -545,6 +545,16 @@ def evaluate_ticker(
             message_type = PHASE_CRASH_ALERT
             message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines, sentiment.commentary)
             state = update_ticker_state(state, symbol, {"last_alert_change_pct": round(metrics["day_change_pct"], 4)})
+        else:
+            print(
+                f"[FLOW] Duplicate block for {symbol}: crash-alert uten nytt >=3% fall siden sist "
+                f"(last_alert_change_pct={last_alert_change}, now={metrics['day_change_pct']:.2f})."
+            )
+    else:
+        print(
+            f"[FLOW] Ingen alert å sende for {symbol} i denne syklusen "
+            f"(phase={current_phase}, crash_hit={crash_hit}, stabilizing={stabilizing}, setup_ready={setup_ready})."
+        )
 
     if message_type and message_html and not can_send_alerts:
         print(f"[FLOW] Market-hours blokkering for {symbol}: message_type={message_type} ble ikke sendt.")
@@ -576,7 +586,9 @@ def evaluate_ticker(
                 reasons.append("duplicate-block (samme meldingstype)")
             if not cooled_down:
                 reasons.append(f"cooldown/state blokkering ({mins_since:.1f}m < {MIN_ALERT_COOLDOWN_MINUTES}m)")
-            print(f"[FLOW] State blokkerer ny sending for {symbol}: {', '.join(reasons)}")
+            reason_text = ", ".join(reasons) if reasons else "ukjent state-blokkering"
+            print(f"[FLOW] State blokkerer ny sending for {symbol}: {reason_text}")
+            log_state_blocked_send(symbol, reason_text, ticker_state)
 
     ticker_state = get_ticker_state(state, symbol)
     followup_updates = _send_follow_up_if_due(symbol, meta, ticker_state, metrics, can_send_alerts, send_message, sentiment)
