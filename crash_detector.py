@@ -42,6 +42,13 @@ def now_oslo() -> datetime:
     return datetime.now(pytz.timezone(ALERT_TIMEZONE))
 
 
+def _send_with_type(send_message, message_html: str, message_type: str) -> bool:
+    try:
+        return send_message(message_html, message_type)
+    except TypeError:
+        return send_message(message_html)
+
+
 def _build_test_metrics(phase: str) -> dict[str, Any]:
     datasets: dict[str, dict[str, Any]] = {
         PHASE_CRASH_ALERT: {
@@ -340,20 +347,27 @@ def _follow_up_slot(now: datetime) -> tuple[str, str] | None:
 
 
 def _send_follow_up_if_due(symbol: str, meta: dict, ticker_state: dict, metrics: dict, can_send_alerts: bool, send_message, sentiment) -> dict[str, Any] | None:
-    if not can_send_alerts or not ticker_state.get("active_followup"):
+    if not can_send_alerts:
+        print(f"[FLOW] Follow-up blokkert av market-hours for {symbol}.")
+        return None
+    if not ticker_state.get("active_followup"):
+        print(f"[FLOW] Follow-up ikke aktiv for {symbol}.")
         return None
 
     day_number = _event_day_number(ticker_state.get("followup_start_date"))
     if day_number > 3:
+        print(f"[FLOW] Follow-up avsluttes for {symbol} (day_number={day_number}).")
         return {"active_followup": False, "followup_day_number": day_number}
 
     slot_info = _follow_up_slot(now_oslo())
     if not slot_info:
+        print(f"[FLOW] Ingen follow-up slot nå for {symbol}.")
         return {"followup_day_number": day_number}
 
     _, state_key = slot_info
     today = now_oslo().date().isoformat()
     if ticker_state.get(state_key) == today:
+        print(f"[FLOW] Duplicate-block follow-up for {symbol}: {state_key} allerede sendt i dag.")
         return {"followup_day_number": day_number}
 
     status_label = _status_label(metrics, ticker_state, sentiment.sentiment)
@@ -368,7 +382,8 @@ def _send_follow_up_if_due(symbol: str, meta: dict, ticker_state: dict, metrics:
         sentiment_commentary=sentiment.commentary,
     )
 
-    if send_message(message_html):
+    print(f"[FLOW] Besluttet å sende FOLLOW_UP for {symbol}.")
+    if _send_with_type(send_message, message_html, "FOLLOW_UP"):
         return {
             state_key: today,
             "followup_day_number": day_number,
@@ -392,10 +407,11 @@ def evaluate_ticker(
     test_send_once: bool = True,
 ) -> dict:
     if force_test_mode:
+        print(f"[FLOW] {symbol}: kjører testflyt (force_test_mode=true).")
         phase = test_phase if test_phase in {PHASE_CRASH_ALERT, PHASE_REBOUND_WATCH, PHASE_SETUP_ACTIVE, PHASE_COOL_OFF} else PHASE_CRASH_ALERT
         ticker_state = get_ticker_state(state, symbol)
         if test_send_once and ticker_state.get("last_test_phase_sent") == phase:
-            print(f"[TEST] Hopper over testmelding fordi fase {phase} allerede er sendt og send_once=True")
+            print(f"[TEST] State-blokkering: hopper over testmelding fordi fase {phase} allerede er sendt og send_once=True")
             return state
 
         metrics = _build_test_metrics(phase)
@@ -423,7 +439,7 @@ def evaluate_ticker(
             message_html = cool_off_message(symbol, meta["name"], metrics, alert_now, reason)
 
         print(f"[TEST] Sender Telegram testmelding for fase {phase}")
-        sent_ok = send_message(with_test_mode_banner(message_html))
+        sent_ok = _send_with_type(send_message, with_test_mode_banner(message_html), f"TEST_{phase}")
         if sent_ok:
             state = update_ticker_state(
                 state,
@@ -442,8 +458,10 @@ def evaluate_ticker(
             print(f"[ERROR] Telegram testmelding feilet for fase {phase}")
         return state
 
+    print(f"[FLOW] {symbol}: kjører normal signalflyt.")
     metrics = fetch_market_data(symbol)
     if not metrics:
+        print(f"[FLOW] Manglende data for {symbol}, ingen signalvurdering denne runden.")
         return state
 
     ticker_state = get_ticker_state(state, symbol)
@@ -466,6 +484,8 @@ def evaluate_ticker(
     ticker_state = get_ticker_state(state, symbol)
 
     crash_hit, trigger_lines = _crash_trigger(metrics)
+    if not crash_hit:
+        print(f"[FLOW] Trigger ikke oppfylt for {symbol} (ingen crash-trigger).")
     stabilizing, observations = _stabilizing(metrics, ticker_state)
     setup_ready, setup_triggers, setup = _setup_ready(metrics, ticker_state)
     cool_reason = _cool_off_reason(metrics, ticker_state)
@@ -475,6 +495,7 @@ def evaluate_ticker(
     message_html = None
 
     if crash_hit and current_phase in {PHASE_IDLE, PHASE_COOL_OFF}:
+        print(f"[FLOW] {symbol}: crash-trigger oppfylt i fase {current_phase} -> {PHASE_CRASH_ALERT}.")
         next_phase = PHASE_CRASH_ALERT
         message_type = PHASE_CRASH_ALERT
         message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines, sentiment.commentary)
@@ -498,18 +519,21 @@ def evaluate_ticker(
         )
 
     elif current_phase == PHASE_CRASH_ALERT and stabilizing:
+        print(f"[FLOW] {symbol}: stabilisering bekreftet -> {PHASE_REBOUND_WATCH}.")
         next_phase = PHASE_REBOUND_WATCH
         message_type = PHASE_REBOUND_WATCH
         day_number = _event_day_number(ticker_state.get("event_start_date"))
         message_html = rebound_watch_message(symbol, meta["name"], metrics, alert_now, day_number, observations, sentiment.commentary)
 
     elif current_phase == PHASE_REBOUND_WATCH and setup_ready and setup and not ticker_state.get("setup_sent"):
+        print(f"[FLOW] {symbol}: setup trigger oppfylt -> {PHASE_SETUP_ACTIVE}.")
         next_phase = PHASE_SETUP_ACTIVE
         message_type = PHASE_SETUP_ACTIVE
         day_number = _event_day_number(ticker_state.get("event_start_date"))
         message_html = setup_active_message(symbol, meta["name"], metrics, alert_now, day_number, setup, setup_triggers)
 
     elif current_phase in {PHASE_REBOUND_WATCH, PHASE_SETUP_ACTIVE} and cool_reason:
+        print(f"[FLOW] {symbol}: cool-off grunn funnet -> {PHASE_COOL_OFF}.")
         next_phase = PHASE_COOL_OFF
         message_type = PHASE_COOL_OFF
         message_html = cool_off_message(symbol, meta["name"], metrics, alert_now, cool_reason)
@@ -522,13 +546,18 @@ def evaluate_ticker(
             message_html = crash_alert_message(symbol, meta["name"], metrics, alert_now, trigger_lines, sentiment.commentary)
             state = update_ticker_state(state, symbol, {"last_alert_change_pct": round(metrics["day_change_pct"], 4)})
 
+    if message_type and message_html and not can_send_alerts:
+        print(f"[FLOW] Market-hours blokkering for {symbol}: message_type={message_type} ble ikke sendt.")
+
     if message_type and message_html and can_send_alerts:
+        print(f"[FLOW] Vurderer sending for {symbol}: message_type={message_type}, current_phase={current_phase}, next_phase={next_phase}.")
         same_type = message_type == ticker_state.get("last_message_type")
         mins_since = _minutes_since(ticker_state.get("last_message_ts"))
         cooled_down = (mins_since is None) or (mins_since >= MIN_ALERT_COOLDOWN_MINUTES)
         phase_change = next_phase != current_phase
         if phase_change or (not same_type) or cooled_down:
-            if send_message(message_html):
+            print(f"[FLOW] Besluttet å sende alert for {symbol}: {message_type}.")
+            if _send_with_type(send_message, message_html, message_type):
                 updates = {
                     "phase": next_phase,
                     "last_message_type": message_type,
@@ -539,6 +568,15 @@ def evaluate_ticker(
                 if message_type == PHASE_SETUP_ACTIVE:
                     updates["setup_sent"] = True
                 state = update_ticker_state(state, symbol, updates)
+            else:
+                print(f"[FLOW] Telegram-send feilet for {symbol}: {message_type}.")
+        else:
+            reasons: list[str] = []
+            if same_type:
+                reasons.append("duplicate-block (samme meldingstype)")
+            if not cooled_down:
+                reasons.append(f"cooldown/state blokkering ({mins_since:.1f}m < {MIN_ALERT_COOLDOWN_MINUTES}m)")
+            print(f"[FLOW] State blokkerer ny sending for {symbol}: {', '.join(reasons)}")
 
     ticker_state = get_ticker_state(state, symbol)
     followup_updates = _send_follow_up_if_due(symbol, meta, ticker_state, metrics, can_send_alerts, send_message, sentiment)

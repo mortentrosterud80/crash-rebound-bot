@@ -18,6 +18,7 @@ def _ensure_parent_dir(path: str) -> None:
 def load_state() -> Dict[str, Dict[str, Any]]:
     """Last state fra disk, returner tom struktur hvis fil mangler/er tom/ugyldig."""
     _ensure_parent_dir(STATE_FILE_PATH)
+    print(f"[STATE] Leser state-fil: {STATE_FILE_PATH}")
 
     if not os.path.exists(STATE_FILE_PATH):
         print(f"[STATE] Fant ikke state-fil, oppretter: {STATE_FILE_PATH}")
@@ -34,6 +35,7 @@ def load_state() -> Dict[str, Dict[str, Any]]:
             if not isinstance(data, dict):
                 print("[STATE] Ugyldig state-format, bruker tom state.")
                 return {}
+            print(f"[STATE] Lastet tickere/state-nøkler: {sorted(data.keys())}")
             return data
     except Exception as exc:
         print(f"[STATE] Klarte ikke lese state-fil: {exc}")
@@ -46,6 +48,7 @@ def save_state(state: Dict[str, Dict[str, Any]]) -> None:
     try:
         with open(STATE_FILE_PATH, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
+        print(f"[STATE] Lagret state til {STATE_FILE_PATH} med tickere: {sorted(state.keys())}")
     except Exception as exc:
         print(f"[STATE] Klarte ikke lagre state: {exc}")
 
