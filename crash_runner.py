@@ -30,6 +30,18 @@ def _parse_hhmm(value: str) -> tuple[int, int]:
     return int(hh), int(mm)
 
 
+def _env_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() == "true"
+
+
+def _mask_secret(value: str | None) -> str:
+    if not value:
+        return "<missing>"
+    if len(value) <= 8:
+        return "***"
+    return f"{value[:4]}***{value[-4:]}"
+
+
 def is_market_hours() -> bool:
     tz = pytz.timezone(ALERT_TIMEZONE)
     now = datetime.now(tz)
@@ -43,53 +55,73 @@ def is_market_hours() -> bool:
 
 
 def send_startup_test_message(token_bot: str, chat_id: str) -> bool:
-    """Send en midlertidig testmelding ved oppstart."""
+    """Send en enkel midlertidig testmelding ved oppstart."""
     message_html = (
-        "📍 <b>TEST — OPPFØLGING (11:00)</b>\n\n"
-        "🧃 <b>ELO.OL</b> (Elopak)\n"
-        "💰 Kurs: <b>37,80 NOK</b>\n"
-        "📈 Fra open: <b>+1,2 %</b>\n"
-        "📊 Volum: <b>1.4x</b> normal\n"
-        "🩸 Panikkbunn: <b>36,00 NOK</b>\n\n"
-        "📰 <b>Stemning nå:</b>\n"
-        "Fortsatt forsiktig, men mindre panikk enn i går.\n\n"
-        "📍 <b>Status nå:</b>\n"
-        "🟡 Stabiliserer seg\n\n"
-        "🎯 <b>Hva ser vi etter:</b>\n"
-        "• Holder over panikkbunn\n"
-        "• Bedre volum og grønn styrke\n"
-        "• Ingen nye negative signaler"
+        "🧪 <b>Crashbot startup-test</b>\n\n"
+        "Boten er oppe og forsøker Telegram-send."
     )
-    return send_telegram_message(token_bot=token_bot, chat_id=chat_id, message_html=message_html)
+    print("[TEST] Startup-test forsøkes: sender enkel Telegram testmelding.")
+    return send_telegram_message(
+        token_bot=token_bot,
+        chat_id=chat_id,
+        message_html=message_html,
+        message_type="STARTUP_TEST",
+    )
 
 
 def main() -> None:
     token_bot = os.getenv("TOKEN_BOT")
     chat_id = os.getenv("CHAT_ID")
+    force_test_mode = _env_bool("CRASHBOT_FORCE_TEST", "false")
+    ignore_market_hours = _env_bool("CRASHBOT_IGNORE_MARKET_HOURS", "false")
+    raw_test_phase = os.getenv("CRASHBOT_TEST_PHASE", "CRASH_ALERT").strip().upper()
+    test_send_once = _env_bool("CRASHBOT_TEST_SEND_ONCE", "true")
+
+    print("[BOOT] Miljøvariabler lest ved oppstart:")
+    print(f"        TOKEN_BOT={_mask_secret(token_bot)}")
+    print(f"        CHAT_ID={_mask_secret(chat_id)}")
+    print(f"        CRASHBOT_FORCE_TEST={'true' if force_test_mode else 'false'}")
+    print(f"        CRASHBOT_IGNORE_MARKET_HOURS={'true' if ignore_market_hours else 'false'}")
+    print(f"        CRASHBOT_TEST_PHASE={raw_test_phase}")
+    print(f"        CRASHBOT_TEST_SEND_ONCE={'true' if test_send_once else 'false'}")
+
     if not token_bot or not chat_id:
         print("[BOOT] Mangler TOKEN_BOT eller CHAT_ID i miljøvariabler.")
         return
 
-    send_startup_test = os.getenv("CRASHBOT_SEND_TEST_MESSAGE", "false").strip().lower() == "true"
-    if send_startup_test:
-        print("[TEST] Sender testmelding til Telegram")
-        send_startup_test_message(token_bot=token_bot, chat_id=chat_id)
+    if force_test_mode:
+        print("[BOOT] Kjøremodus: TESTFLYT (CRASHBOT_FORCE_TEST=true).")
+    else:
+        print("[BOOT] Kjøremodus: NORMAL DRIFT (CRASHBOT_FORCE_TEST=false).")
+        print("[BOOT] Merk: CRASHBOT_TEST_PHASE alene aktiverer ikke testflyt.")
+
+    startup_test_sent = False
+    if force_test_mode:
+        if test_send_once and startup_test_sent:
+            print("[TEST] Hopper over startup-test fordi CRASHBOT_TEST_SEND_ONCE=true og test allerede sendt.")
+        else:
+            sent = send_startup_test_message(token_bot=token_bot, chat_id=chat_id)
+            startup_test_sent = sent or test_send_once
+            if sent:
+                print("[TEST] Startup-testmelding sendt OK.")
+            else:
+                print("[TEST] Startup-testmelding FEILET.")
 
     print(f"[BOOT] Crashbot startet for: {', '.join(WATCHLIST)}")
     valid_test_phases = {PHASE_CRASH_ALERT, PHASE_REBOUND_WATCH, PHASE_SETUP_ACTIVE, PHASE_COOL_OFF}
 
     while True:
-        force_test_mode = os.getenv("CRASHBOT_FORCE_TEST", "false").strip().lower() == "true"
-        ignore_market_hours = os.getenv("CRASHBOT_IGNORE_MARKET_HOURS", "false").strip().lower() == "true"
+        force_test_mode = _env_bool("CRASHBOT_FORCE_TEST", "false")
+        ignore_market_hours = _env_bool("CRASHBOT_IGNORE_MARKET_HOURS", "false")
         raw_test_phase = os.getenv("CRASHBOT_TEST_PHASE", "CRASH_ALERT").strip().upper()
         test_phase = raw_test_phase
         if test_phase not in valid_test_phases:
             print(f"[WARN] Ugyldig CRASHBOT_TEST_PHASE='{raw_test_phase}'. Faller tilbake til CRASH_ALERT.")
             test_phase = PHASE_CRASH_ALERT
-        test_send_once = os.getenv("CRASHBOT_TEST_SEND_ONCE", "true").strip().lower() == "true"
+        test_send_once = _env_bool("CRASHBOT_TEST_SEND_ONCE", "true")
 
         within_window = True if force_test_mode or ignore_market_hours else is_market_hours()
-        print("[BOOT] Testvariabler:")
+        print("[LOOP] Testvariabler:")
         print(f"        CRASHBOT_FORCE_TEST={'true' if force_test_mode else 'false'}")
         print(f"        CRASHBOT_IGNORE_MARKET_HOURS={'true' if ignore_market_hours else 'false'}")
         print(f"        CRASHBOT_TEST_PHASE={test_phase}")
@@ -110,8 +142,13 @@ def main() -> None:
         for symbol in WATCHLIST:
             meta = TICKER_META.get(symbol, {"name": symbol, "emoji": "🧃"})
 
-            def _sender(message_html: str) -> bool:
-                return send_telegram_message(token_bot=token_bot, chat_id=chat_id, message_html=message_html)
+            def _sender(message_html: str, message_type: str = "SIGNAL") -> bool:
+                return send_telegram_message(
+                    token_bot=token_bot,
+                    chat_id=chat_id,
+                    message_html=message_html,
+                    message_type=message_type,
+                )
 
             state = evaluate_ticker(
                 symbol=symbol,
